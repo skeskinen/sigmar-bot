@@ -1,0 +1,10 @@
+[package]
+authors = ["Santtu Keskinen <santtu.keskinen@kompozure.net>"]
+name = "sigmar_bot"
+version = "0.1.0"
+
+[dependencies]
+dxgcap = "0.0.8"
+image = "0.17.0"
+rand = "0.3.17"
+scrap = "0.3.2"
