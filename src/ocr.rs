@@ -1,11 +1,14 @@
 
-use image::{ImageBuffer, Rgba, Rgb, Luma, ConvertBuffer};
+use std;
+use image::{ImageBuffer, Rgba, Rgb};
 use scrap::{Capturer, Display};
 use std::io::ErrorKind::WouldBlock;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
-use std::cmp::{max, min};
+use num;
+use std::cmp::{min,max};
+use std::collections::VecDeque;
 
 use sigmar::{board_rows, Board, Marble};
 
@@ -22,6 +25,33 @@ impl SRGB {
         let SRGB{r: r_o, g: g_o, b: b_o} = *other;
         let f = |a: u8, b: u8| -> f32 {let diff = a as f32 - b as f32; diff * diff};
         (f(r_s, r_o) + f(g_s, g_o) + f(b_s, b_o)).sqrt()
+    }
+}
+
+struct SRGBIntoIter {
+    srgb: SRGB,
+    pos: u8,
+}
+
+impl<'a> Iterator for SRGBIntoIter {
+    type Item = u8;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.pos += 1;
+        match self.pos {
+            1 => Some(self.srgb.r),
+            2 => Some(self.srgb.g),
+            3 => Some(self.srgb.b),
+            _ => None,
+        }
+    }
+}
+
+impl IntoIterator for SRGB {
+    type Item = u8;
+    type IntoIter = SRGBIntoIter;
+
+    fn into_iter(self) -> SRGBIntoIter {
+        SRGBIntoIter{srgb: self, pos: 0}
     }
 }
 
@@ -46,7 +76,7 @@ struct RGB {
 impl From<SRGB> for RGB {
     fn from(SRGB{r, g, b}: SRGB) -> RGB {
         let to_linear = |c: u8| {
-            let c_f32 = c as f32;
+            let c_f32 = c as f32 / 255.0;
             if c_f32 <= 0.04045 {c_f32 / 12.92}
                 else {((c_f32 + 0.055) / 1.055).powf(2.4)}
         };
@@ -56,25 +86,143 @@ impl From<SRGB> for RGB {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct GreyScale (f32);
+struct Grayscale (f32);
 
-impl From<GreyScale> for SRGB {
-    fn from(GreyScale(y): GreyScale) -> SRGB {
+impl From<Grayscale> for SRGB {
+    fn from(Grayscale(y): Grayscale) -> SRGB {
         let c = if y <= 0.0031308 {12.92 * y} else {(1.055 * y).powf(1.0/2.4) - 0.055};
-        let uint = c.round() as u8;
+        let uint = (c * 255.0).round() as u8;
         SRGB{r: uint, g: uint, b: uint}
     }
 }
 
-fn to_grayscale(pixel: SRGB) -> GreyScale {
-    let RGB{r,g,b} = RGB::from(pixel);
-    GreyScale(0.2126 * r + 0.7152 * g + 0.0722 * b)
+impl From<RGB> for SRGB {
+    fn from(RGB{r,g,b}: RGB) -> SRGB {
+        let gamma_compress = |y: f32| -> u8 {
+            let c = if y <= 0.0031308 {12.92 * y} else {(1.055 * y).powf(1.0/2.4) - 0.055};
+            (c * 255.0).round() as u8
+        };
+        SRGB{r: gamma_compress(r), g: gamma_compress(g), b: gamma_compress(b)}
+    }
 }
 
+impl From<EdgeGradient> for SRGB {
+    fn from(edge: EdgeGradient) -> SRGB {
+        let EdgeGradient { intensity, angle } = edge;
+
+        let s = 1.0;
+        let h = angle / std::f32::consts::PI * 3.0 + 3.0;
+        let v = num::clamp(intensity * 2.0, 0.0, 1.0);
+
+        let i = h.floor();
+        let f = h - i;
+        let p = v * ( 1.0 - s );
+        let q = v * ( 1.0 - s * f );
+        let t = v * ( 1.0 - s * ( 1.0 - f ) );
+
+        let rgb = match i as i32 {
+            0 => RGB{r: v, g: t, b: p},
+            1 => RGB{r: q, g: v, b: p},
+            2 => RGB{r: p, g: v, b: t},
+            3 => RGB{r: p, g: q, b: v},
+            4 => RGB{r: t, g: p, b: v},
+            _ => RGB{r: v, g: p, b: q},
+        };
+        SRGB::from(rgb)
+    }
+}
+
+fn to_grayscale(pixel: SRGB) -> Grayscale {
+    let RGB{r,g,b} = RGB::from(pixel);
+    Grayscale(0.2126 * r + 0.7152 * g + 0.0722 * b)
+}
+
+#[derive(Clone, Debug)]
 struct Image<T> {
     w: usize,
     h: usize,
     data: Vec<T>,
+}
+
+struct ImageIterMut<'a, T: 'a> {
+    iter: std::slice::IterMut<'a, T>,
+}
+
+impl<'a, T: 'a> Iterator for ImageIterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut Image<T> {
+    type Item = &'a mut T;
+    type IntoIter = ImageIterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        ImageIterMut {
+            iter: self.data.iter_mut(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct EdgeGradient {
+    intensity: f32,
+    angle: f32,
+}
+
+fn gaussian_kernel(size: usize, std_dev: f32) -> Image<Grayscale> {
+    let mut data = vec![Grayscale(0.0); size*size];
+
+    let denom = std::f32::consts::PI * 2.0 * std_dev;
+
+    let mut acc = 0.0;
+
+    for (i, grey) in data.iter_mut().enumerate() {
+        let x = (i % size) as i32;
+        let y = (i / size) as i32;
+        let half_size = (size / 2) as i32;
+        let (x_dist, y_dist) = ((x - half_size).abs(), (y - half_size).abs());
+
+        let Grayscale(ref mut f) = *grey;
+        *f = (1.0 / denom) * (std::f32::consts::E.powf(- ((x_dist * x_dist) as f32 + (y_dist * y_dist) as f32) / (2.0 * std_dev)));
+        acc += *f;
+    }
+
+    for grey in data.iter_mut() {
+        let Grayscale(ref mut f) = *grey;
+        *f = *f / acc;
+    }
+
+    Image {
+        w: size,
+        h: size,
+        data: data,
+    }
+}
+
+lazy_static! {
+    static ref SOBEL_X: Image<Grayscale> = {
+        Image {
+            w: 3,
+            h: 3,
+            data: vec![1.0, 0.0, -1.0, 2.0, 0.0, -2.0, 1.0, 0.0, -1.0].iter().map(|&f| Grayscale(f)).collect(),
+        }
+    };
+    static ref SOBEL_Y: Image<Grayscale> = {
+        Image {
+            w: 3,
+            h: 3,
+            data: vec![1.0, 2.0, 1.0, 0.0, 0.0, 0.0, -1.0, -2.0, -1.0].iter().map(|&f| Grayscale(f)).collect(),
+        }
+    };
+
+    static ref GAUSS: Image<Grayscale> = {
+        gaussian_kernel(5, 0.5)
+        // gaussian_kernel(7, 0.84089642 * 0.84089642)
+    };
 }
 
 impl<T> ::std::ops::Index<usize> for Image<T> {
@@ -83,29 +231,162 @@ impl<T> ::std::ops::Index<usize> for Image<T> {
     fn index(&self, idx: usize) -> &Self::Output {
         &self.data[idx]
     }
+
+}
+
+impl Image<Grayscale> {
+    fn convolute(&self, kernel: &Image<Grayscale>) -> Image<Grayscale> {
+        let mut buf = vec![Grayscale(0.0); self.w * self.h];
+
+        let val = |mut x: i32, mut y: i32| -> Grayscale {
+            x = num::clamp(x, 0, (self.w - 1) as i32);
+            y = num::clamp(y, 0, (self.h - 1) as i32);
+            self.data[y as usize * self.w + x as usize]
+        };
+
+        for y in 0..self.h {
+            for x in 0..self.w {
+                let Grayscale(ref mut acc) = buf[y * self.w + x];
+                let (kw, kh) = (kernel.w as i32, kernel.h as i32);
+                let (half_kw, half_kh) = (kw/2, kh/2);
+                for ky in 0..kh {
+                    for kx in 0..kw {
+                        let Grayscale(kernel_val) = kernel[(ky * kw + kx) as usize];
+                        let Grayscale(image_val) = val(x as i32 + kx - half_kw, y as i32 + ky - half_kh);
+                        *acc += kernel_val * image_val;
+                    }
+                }
+            }
+        }
+        Image{w: self.w, h: self.h, data: buf}
+    }
+
+}
+
+fn sobel(image: &Image<Grayscale>) -> Image<EdgeGradient> {
+    let x = image.convolute(&SOBEL_X);
+    let y = image.convolute(&SOBEL_Y);
+
+    let data = x.data.iter()
+        .zip(y.data.iter())
+        .map(|(&Grayscale(x), &Grayscale(y))| EdgeGradient { 
+            intensity: (x * x + y * y).sqrt(),
+            angle: y.atan2(x),
+        }).collect();
+
+    Image {
+        w: image.w,
+        h: image.h,
+        data: data,
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+enum CannyLabel {
+    Strong,
+    Weak,
+    Suppressed,
+}
+
+fn canny(image: &Image<EdgeGradient>) -> Image<Grayscale> {
+    let mut max_intensity = 0.0;
+    let non_maximum_suppressed: Vec<f32> = image.data.iter().enumerate().map(|(i, &EdgeGradient{angle, intensity})| {
+        let x = (i % image.w) as i32;
+        let y = (i / image.w) as i32;
+        let get_neig = |a_x: i32, a_y: i32| -> f32 {
+            let (t_x, t_y) = (x + a_x, y + a_y);
+            if t_x < 0 || t_x >= image.w as i32 || t_y < 0 || t_y >= image.h as i32 { 0.0 }
+            else { image.data[t_y as usize * image.w + t_x as usize].intensity }
+        };
+        let mut dir = (angle / std::f32::consts::PI * 4.0).round();
+        if dir < 0.0 { dir = 4.0 + dir }
+        let (d_x, d_y) = match dir as i32{
+            0 => (1, 0),
+            1 => (1, 1),
+            2 => (0, 1),
+            3 => (1, -1),
+            4 => (0, 1),
+            _ => panic!("canny bad angle"),
+        };
+        if get_neig(d_x, d_y) > intensity || get_neig(-d_x, -d_y) > intensity { 0.0 }
+        else { 
+            if intensity > max_intensity { max_intensity = intensity; }
+            intensity
+        }
+    }).collect();
+
+    let normalized: Vec<f32> = non_maximum_suppressed.iter().map(|&f| f / max_intensity).collect();
+    
+    let high_thres = 0.6;
+    let low_thres = 0.25;
+
+    let mut queue = VecDeque::with_capacity(40);
+    let mut thresholded: Vec<CannyLabel> = normalized.iter().enumerate().map(|(i, &f)| if f >= high_thres {queue.push_back(i); CannyLabel::Strong} else if f >= low_thres {CannyLabel::Weak} else {CannyLabel::Suppressed}).collect();
+
+    while let Some(i) = queue.pop_front() {
+        let x = (i % image.w) as i32;
+        let y = (i / image.w) as i32;
+
+        let mut try_queue_neigh = |a_x: i32, a_y: i32| {
+            let (t_x, t_y) = (x + a_x, y + a_y);
+            if t_x < 0 || t_x >= image.w as i32 || t_y < 0 || t_y >= image.h as i32 { return }
+            let t_i = t_y as usize * image.w + t_x as usize;
+            if thresholded[t_i] == CannyLabel::Weak {
+                thresholded[t_i] = CannyLabel::Strong;
+                queue.push_back(t_i);
+            }
+        };
+        try_queue_neigh(-1,-1);
+        try_queue_neigh(-1, 1);
+        try_queue_neigh(-1, 0);
+        try_queue_neigh(0, -1);
+        try_queue_neigh(0,  1);
+        try_queue_neigh(1, -1);
+        try_queue_neigh(1,  0);
+        try_queue_neigh(1,  1);
+    }
+
+    let final_res = thresholded.iter().map(|label| if (*label) == CannyLabel::Strong { Grayscale(1.0) } else { Grayscale(0.0) }).collect();
+
+    Image {
+        w: image.w,
+        h: image.h,
+        data: final_res,
+    }
+}
+
+fn gate_filter(image: &Image<Grayscale>, threshold: f32) -> Image<Grayscale> {
+    Image {
+        w: image.w,
+        h: image.h,
+        data: image.data.iter().map(|&Grayscale(g)| { Grayscale(if g > threshold {1.0} else {0.0}) }).collect(),
+    }
 }
 
 const TILE_WIDTH: f32 = 66.0;
 const TILE_HEIGHT: f32 = 57.0;
 
-fn recognize_marble_at(desktop_image: &Image<SRGB>, x: i32, y: i32) -> Marble {
+fn recognize_marble_at(desktop_image: &Image<SRGB>, x: i32, y: i32, board_x: i32, board_y: i32) -> Marble {
     let mut data: Vec<SRGB> = Vec::with_capacity(30*40);
     for my in -20..20 {
         for mx in -15..15 {
             data.push(desktop_image[(x + mx) as usize + (y+my) as usize * desktop_image.w]);
         }
     }
-    // let gray_marble = Image{w: 32, h: 40, data: data.iter().map(|p| to_grayscale(*p)).collect()};
-    // let luma: Vec<f32> = gray_marble.data.iter().map(|g| g.0).collect();
+    let gray_marble = Image{w: 30, h: 40, data: data.iter().map(|p| to_grayscale(*p)).collect()};
 
-    // let srgb = luma.iter().flat_map(|l| ::std::iter::repeat(SRGB::from(GreyScale(*l)).r).take(3)).collect();
+    let gauss = gray_marble.convolute(&GAUSS);
 
-    let mut asd = Vec::with_capacity(30*40*3);
-    for d in data { asd.push(d.r); asd.push(d.g); asd.push(d.b)}
+    let sobel_image = sobel(&gauss);
+    let canny_image = canny(&sobel_image);
+    // let gated_edges = gate_filter(&sobel_image, 0.08);
 
-    let buf: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_vec(30, 40, asd).unwrap();
+    let srgb: Vec<u8> = canny_image.data.iter().flat_map(|&g| SRGB::from(g).into_iter()).collect();
+    // let srgb: Vec<u8> = sobel_image.data.iter().flat_map(|&g| SRGB::from(g).into_iter()).collect();
 
-    buf.save(format!("images/{}_{}.png", x, y)).expect("save failed");
+    let buf: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_vec(30, 40, srgb).unwrap();
+
+    buf.save(format!("images/{}_{}.png", board_y, board_x)).expect("save failed");
 
     Marble::Empty
 }
@@ -185,7 +466,7 @@ pub fn ocr_game_board() -> Option<i32>{
             let (screen_x, screen_y) = board_pos_to_screen(x - 5, (i as i32 - 5));
             let (coord_x, coord_y) = (gold_x + (screen_x * TILE_WIDTH) as i32 + 1, gold_y + (screen_y * TILE_HEIGHT) as i32);
             
-            board[i + 1][x as usize + 1] = recognize_marble_at(&desktop_image, coord_x, coord_y);
+            board[i + 1][x as usize + 1] = recognize_marble_at(&desktop_image, coord_x, coord_y, x, i as i32);
         }
     }
 

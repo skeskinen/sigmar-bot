@@ -3,6 +3,10 @@
 extern crate image;
 extern crate scrap;
 extern crate rand;
+extern crate num;
+
+#[macro_use]
+extern crate lazy_static;
 
 extern crate dxgcap;
 
