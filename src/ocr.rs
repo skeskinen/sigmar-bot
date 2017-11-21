@@ -1,16 +1,16 @@
-
 use std;
-use image::{ImageBuffer, Rgba, Rgb};
+use image;
+use image::{ImageBuffer, Rgba};
 use scrap::{Capturer, Display};
 use std::io::ErrorKind::WouldBlock;
 use std::path::Path;
 use std::thread;
 use std::time::Duration;
 use num;
-use std::cmp::{min,max};
 use std::collections::VecDeque;
+use std::error::Error;
 
-use sigmar::{board_rows, Board, Marble};
+use sigmar::{board_rows, Board, Marble, MARBLE_VALUES};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SRGB {
@@ -221,7 +221,6 @@ lazy_static! {
 
     static ref GAUSS: Image<Grayscale> = {
         gaussian_kernel(5, 0.5)
-        // gaussian_kernel(7, 0.84089642 * 0.84089642)
     };
 }
 
@@ -288,7 +287,7 @@ enum CannyLabel {
     Suppressed,
 }
 
-fn canny(image: &Image<EdgeGradient>) -> Image<Grayscale> {
+fn canny(image: &Image<EdgeGradient>) -> Image<bool> {
     let mut max_intensity = 0.0;
     let non_maximum_suppressed: Vec<f32> = image.data.iter().enumerate().map(|(i, &EdgeGradient{angle, intensity})| {
         let x = (i % image.w) as i32;
@@ -315,8 +314,8 @@ fn canny(image: &Image<EdgeGradient>) -> Image<Grayscale> {
         }
     }).collect();
 
-    let normalized: Vec<f32> = non_maximum_suppressed.iter().map(|&f| f / max_intensity).collect();
-    
+    let normalized: Vec<f32> = non_maximum_suppressed.iter().map(|&f| if max_intensity > 0.1 { f / max_intensity } else { 0.0 }).collect();
+
     let high_thres = 0.6;
     let low_thres = 0.25;
 
@@ -346,7 +345,7 @@ fn canny(image: &Image<EdgeGradient>) -> Image<Grayscale> {
         try_queue_neigh(1,  1);
     }
 
-    let final_res = thresholded.iter().map(|label| if (*label) == CannyLabel::Strong { Grayscale(1.0) } else { Grayscale(0.0) }).collect();
+    let final_res = thresholded.iter().map(|label| if (*label) == CannyLabel::Strong { true } else { false }).collect();
 
     Image {
         w: image.w,
@@ -355,18 +354,34 @@ fn canny(image: &Image<EdgeGradient>) -> Image<Grayscale> {
     }
 }
 
-fn gate_filter(image: &Image<Grayscale>, threshold: f32) -> Image<Grayscale> {
-    Image {
-        w: image.w,
-        h: image.h,
-        data: image.data.iter().map(|&Grayscale(g)| { Grayscale(if g > threshold {1.0} else {0.0}) }).collect(),
-    }
-}
-
 const TILE_WIDTH: f32 = 66.0;
 const TILE_HEIGHT: f32 = 57.0;
 
-fn recognize_marble_at(desktop_image: &Image<SRGB>, x: i32, y: i32, board_x: i32, board_y: i32) -> Marble {
+fn get_font() -> Vec<(Marble, Image<bool>)> {
+    let path = |marble: Marble| -> String { format!("symbol-font/{}.png", marble.to_string()) };
+    (&MARBLE_VALUES[..]).iter().map(|&marble| {
+        let im = image::open(path(marble));
+        let image = match im {
+            Ok(image) => image,
+            Err(e) => panic!("Couldn't find sample image for {}, {}", marble.to_string(), e.description())
+        };
+        let luma = image.to_luma();
+        let pixels = luma.into_raw().iter().map(|&l| l > 100).collect();
+        (marble, Image{w: 30, h: 40, data: pixels})
+    }).collect()
+}
+
+lazy_static! {
+    static ref FONT: Vec<(Marble, Image<bool>)> = {
+        get_font()
+    };
+}
+
+fn matching_pixels(a: &Image<bool>, b: &Image<bool>) -> i32 {
+    a.data.iter().enumerate().map(|(i, &k)| if k && b[i] { 1i32 } else { 0i32 }).sum()
+}
+
+fn recognize_marble_at(desktop_image: &Image<SRGB>, x: i32, y: i32) -> Marble {
     let mut data: Vec<SRGB> = Vec::with_capacity(30*40);
     for my in -20..20 {
         for mx in -15..15 {
@@ -379,16 +394,19 @@ fn recognize_marble_at(desktop_image: &Image<SRGB>, x: i32, y: i32, board_x: i32
 
     let sobel_image = sobel(&gauss);
     let canny_image = canny(&sobel_image);
-    // let gated_edges = gate_filter(&sobel_image, 0.08);
 
-    let srgb: Vec<u8> = canny_image.data.iter().flat_map(|&g| SRGB::from(g).into_iter()).collect();
-    // let srgb: Vec<u8> = sobel_image.data.iter().flat_map(|&g| SRGB::from(g).into_iter()).collect();
+    let mut best_match = Marble::Empty;
+    let mut best_match_count = 0;
 
-    let buf: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_vec(30, 40, srgb).unwrap();
+    for &(sample_marble, ref sample_image) in FONT.iter() {
+        let matching = matching_pixels(&canny_image, sample_image);
+        if matching > best_match_count {
+            best_match_count = matching;
+            best_match = sample_marble;
+        }
+    }
 
-    buf.save(format!("images/{}_{}.png", board_y, board_x)).expect("save failed");
-
-    Marble::Empty
+    best_match
 }
 
 fn capture(mut capturer: Capturer) -> Vec<u8> {
@@ -412,20 +430,20 @@ fn capture(mut capturer: Capturer) -> Vec<u8> {
     }
 }
 
-pub fn ocr_game_board() -> Option<i32>{
+pub fn ocr_game_board() -> Option<Board>{
     let display = Display::primary().expect("Couldn't find primary display.");
     let capturer = Capturer::new(display).expect("Couldn't begin capture.");
     let (w, h) = (capturer.width(), capturer.height());
 
-    let mut buffer = capture(capturer);
+    let buffer = capture(capturer);
 
-    _save_screenshot(&buffer, w, h);
+    // _save_screenshot(&buffer, w, h);
 
     let desktop_image: Image<SRGB> = Image{
         w: w, h: h,
         data: (&buffer[..]).chunks(4).map(|chunk: &[u8]| {
                 match chunk {
-                    &[b, g, r, a] => SRGB{r: r, g: g, b: b},
+                    &[b, g, r, _a] => SRGB{r: r, g: g, b: b},
                     _ => unreachable!()
                 }
             }).collect()
@@ -466,11 +484,12 @@ pub fn ocr_game_board() -> Option<i32>{
             let (screen_x, screen_y) = board_pos_to_screen(x - 5, (i as i32 - 5));
             let (coord_x, coord_y) = (gold_x + (screen_x * TILE_WIDTH) as i32 + 1, gold_y + (screen_y * TILE_HEIGHT) as i32);
             
-            board[i + 1][x as usize + 1] = recognize_marble_at(&desktop_image, coord_x, coord_y, x, i as i32);
+            board[i + 1][x as usize + 1] = recognize_marble_at(&desktop_image, coord_x, coord_y);
+            println!("{} {} {}", i, x, board[i + 1][x as usize + 1]);
         }
     }
 
-    Some(0)
+    Some(board)
 }
 
 fn _save_screenshot(buffer: &Vec<u8>, w: usize, h: usize) {

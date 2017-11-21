@@ -1,4 +1,5 @@
 use std::cmp::{min, max};
+use std::fmt;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Marble {
@@ -13,10 +14,20 @@ pub enum Marble {
     Copper,
     Silver,
     Gold,
-    QuickS,
+    Mercury,
     Vitae,
     Mors,
     Empty
+}
+
+pub const MARBLE_VALUES: [Marble; 14] = [Marble::Salt, Marble::Air, Marble::Fire, Marble::Water, Marble::Earth,
+    Marble::Lead, Marble::Tin, Marble::Iron, Marble::Copper, Marble::Silver, Marble::Gold, Marble::Mercury,
+    Marble::Vitae, Marble::Mors];
+
+impl fmt::Display for Marble {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 pub type Board = [[Marble; 13]; 13];

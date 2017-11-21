@@ -17,9 +17,9 @@ mod ocr;
 fn main() {
     // send_input();
 
-    match ocr::ocr_game_board() {
-        None => println!("Couldn't ocr. Board not visible?"),
-        _ => (),
-    }
+    let board = match ocr::ocr_game_board() {
+        None => panic!("Couldn't ocr. Board not visible?"),
+        Some(board) => board
+    };
 
 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[link(name="User32")]
 extern "system" {
     pub fn SendInput(cInputs: u32, pInputs: *mut Input, cbSize: i32) -> u32;
