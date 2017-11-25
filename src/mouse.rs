@@ -34,7 +34,7 @@ fn send_input(input: MouseInput) {
     unsafe { SendInput(1, &mut input, std::mem::size_of::<Input>() as i32); }
 }
 
-fn move_cursor(x: f32, y: f32) {
+pub fn move_cursor(x: f32, y: f32) {
     send_input(MouseInput {
         dx: (COORD_MAX * x) as i32,
         dy: (COORD_MAX * y) as i32,
@@ -60,7 +60,7 @@ pub fn click_at(x: f32, y: f32) {
     move_cursor(x, y);
     std::thread::sleep( Duration::from_millis(10));
     click(LEFTDOWN);
-    std::thread::sleep( Duration::from_millis(80));
+    std::thread::sleep( Duration::from_millis(60));
     click(LEFTUP);
-    std::thread::sleep( Duration::from_millis(80));
+    std::thread::sleep( Duration::from_millis(60));
 }

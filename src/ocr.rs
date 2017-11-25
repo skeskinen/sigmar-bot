@@ -472,18 +472,18 @@ pub fn ocr_game_board() -> Option<Board>{
         return None;
     }
 
-    println!("Best guess for board center {} {:?}", best_dist, best_coord);
+    // println!("Best guess for board center {} {:?}", best_dist, best_coord);
     let (gold_x, gold_y) = best_coord;
 
     let rows = board_rows();
 
-    let mut board: Board = Board {
-        board: [[Marble::Empty;13];13],
-        middle_x: gold_x as f32 / w as f32,
-        middle_y: gold_y as f32 / h as f32,
-        tile_w: TILE_WIDTH as f32 / w as f32,
-        tile_h: TILE_HEIGHT as f32 / h as f32,
-    };
+    let mut board: Board = Board::new(
+        [[Marble::Empty;13];13],
+        gold_x as f32 / w as f32,
+        gold_y as f32 / h as f32,
+        TILE_WIDTH as f32 / w as f32,
+        TILE_HEIGHT as f32 / h as f32,
+    );
 
     for (i, r) in rows.iter().enumerate() {
         for x in r.x_min .. r.x_max + 1 {
