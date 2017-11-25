@@ -32,6 +32,7 @@ impl fmt::Display for Marble {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Board {
     pub board: [[Marble; 13]; 13],
     pub middle_x: f32,
@@ -165,10 +166,24 @@ impl Board {
         moves
     }
 
+
+    pub fn solve(&self) -> Vec<Move> {
+        let mut board = self.clone();
+        let mut moves: Vec<Move> = Vec::with_capacity(30);
+        go_solve(&mut board, &mut moves);
+        moves
+    }
+
     pub fn pos_to_screen(&self, x: usize, y: usize) -> (f32, f32) {
         let offset_x = x as f32 - 6.0 + (y as f32 - 6.0) / 2.0;
         let offset_y = y as f32 - 6.0;
         (self.middle_x + offset_x * self.tile_w, self.middle_y -  offset_y * self.tile_h)
+    }
+
+    pub fn new_game_pos(&self) -> (f32, f32) {
+        let offset_x = self.tile_w as f32 * -5.0;
+        let offset_y = self.tile_h as f32 * 6.5;
+        (self.middle_x + offset_x, self.middle_y + offset_y)
     }
     
     pub fn remove_marble(&mut self, pos: MarblePos) {
@@ -180,6 +195,34 @@ impl Board {
         self.remove_marble(a);
         self.remove_marble(b);
     }
+
+    pub fn reverse_move(&mut self, mov: Move) {
+        let Move{a, b} = mov;
+        self.board[a.y][a.x] = a.marble;
+        self.board[b.y][b.x] = b.marble;
+    }
+}
+
+const TOTAL_MOVES: usize = 28;
+
+fn go_solve(board: &mut Board, moves_ref: &mut Vec<Move>) -> bool {
+    let legal = board.legal_moves();
+
+    for m in legal.into_iter() {
+        board.make_move(m);
+        moves_ref.push(m);
+
+        if moves_ref.len() == TOTAL_MOVES {
+            return true;
+        }
+        if go_solve(board, moves_ref) {
+            return true
+        }
+
+        moves_ref.pop();
+        board.reverse_move(m);
+    }
+    return false;
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
