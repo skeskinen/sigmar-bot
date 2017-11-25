@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[link(name="User32")]
 extern "system" {
     pub fn SendInput(cInputs: u32, pInputs: *mut Input, cbSize: i32) -> u32;
@@ -60,8 +58,9 @@ fn click(flags: u32) {
 
 pub fn click_at(x: f32, y: f32) {
     move_cursor(x, y);
-    std::thread::sleep( Duration::new(0, 100_000));
+    std::thread::sleep( Duration::from_millis(10));
     click(LEFTDOWN);
-    std::thread::sleep( Duration::new(0, 100_000));
+    std::thread::sleep( Duration::from_millis(80));
     click(LEFTUP);
+    std::thread::sleep( Duration::from_millis(80));
 }

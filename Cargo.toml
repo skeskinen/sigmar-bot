@@ -6,6 +6,7 @@ version = "0.1.0"
 [dependencies]
 dxgcap = "0.0.8"
 image = "0.17.0"
+itertools = "0.7.2"
 lazy_static = "0.2.9"
 num = "0.1.40"
 rand = "0.3.17"

@@ -477,15 +477,21 @@ pub fn ocr_game_board() -> Option<Board>{
 
     let rows = board_rows();
 
-    let mut board: Board = [[Marble::Empty;13];13];
+    let mut board: Board = Board {
+        board: [[Marble::Empty;13];13],
+        middle_x: gold_x as f32 / w as f32,
+        middle_y: gold_y as f32 / h as f32,
+        tile_w: TILE_WIDTH as f32 / w as f32,
+        tile_h: TILE_HEIGHT as f32 / h as f32,
+    };
 
     for (i, r) in rows.iter().enumerate() {
         for x in r.x_min .. r.x_max + 1 {
             let (screen_x, screen_y) = board_pos_to_screen(x - 5, (i as i32 - 5));
             let (coord_x, coord_y) = (gold_x + (screen_x * TILE_WIDTH) as i32 + 1, gold_y + (screen_y * TILE_HEIGHT) as i32);
             
-            board[i + 1][x as usize + 1] = recognize_marble_at(&desktop_image, coord_x, coord_y);
-            println!("{} {} {}", i, x, board[i + 1][x as usize + 1]);
+            board.board[i + 1][x as usize + 1] = recognize_marble_at(&desktop_image, coord_x, coord_y);
+            // println!("{} {} {}", i, x, board.board[i + 1][x as usize + 1]);
         }
     }
 
@@ -510,7 +516,6 @@ fn _save_screenshot(buffer: &Vec<u8>, w: usize, h: usize) {
     image.save(&path).expect("Couldn't save image to `screenshot.png`.");
     println!("Image saved to `screenshot.png`.");
 }
-
 
 fn board_pos_to_screen(x: i32, y: i32) -> (f32, f32) {
     (x as f32 + (y as f32 / 2.0), -y as f32)
