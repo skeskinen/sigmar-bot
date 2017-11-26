@@ -76,14 +76,14 @@ impl Board {
 
     fn hash_add_rem_marble(&mut self, x: usize, y: usize, m: Marble) {
         if m != Marble::Empty {
-            self.hash = self.hash ^ ZOBRIST_TABLE[y][x][m as usize];
+            self.hash ^= ZOBRIST_TABLE[y][x][m as usize];
         }
     }
 
     fn is_free(&self, c_x: usize, c_y: usize) -> bool {
         let (s_x, s_y) = (c_x - 1, c_y - 1);
         if self.board[c_y][c_x] == Marble::Empty { return false }
-        let is_neighbour_empty = |m_x: usize, m_y: usize| { if self.board[s_y + m_y][s_x + m_x] == Marble::Empty { true } else { false }};
+        let is_neighbour_empty = |m_x: usize, m_y: usize| self.board[s_y + m_y][s_x + m_x] == Marble::Empty;
         let mut empty_neighbour_sum = 0;
 
         let neighbours = [(2, 1), (2, 0), (1, 0), (0, 1), (0, 2), (1, 2), (2, 1), (2, 0)];
@@ -207,7 +207,7 @@ impl Board {
 
     pub fn solve(&self) -> Option<Vec<Move>> {
         let mut board = self.clone();
-        let mut visited: HashSet<u64> = HashSet::with_capacity(60000);
+        let mut visited: HashSet<u64> = HashSet::with_capacity(60_000);
         go_solve(&mut board, &mut visited, 1)
     }
 
@@ -257,7 +257,7 @@ fn go_solve(board: &mut Board, visited: &mut HashSet<u64>, depth: usize) -> Opti
     if visited.contains(&board.hash) { return None }
     let legal = board.legal_moves();
 
-    for m in legal.into_iter() {
+    for m in legal {
         board.make_move(m);
 
         if depth == TOTAL_MOVES {
@@ -273,7 +273,7 @@ fn go_solve(board: &mut Board, visited: &mut HashSet<u64>, depth: usize) -> Opti
 
         board.reverse_move(m);
     }
-    return None;
+    None
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -291,7 +291,7 @@ pub struct MarblePos {
 
 impl PartialOrd for MarblePos {
     fn partial_cmp(&self, other: &MarblePos) -> Option <std::cmp::Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 impl Ord for MarblePos {
@@ -308,7 +308,7 @@ pub struct RowDesc {
 
 pub fn board_rows() -> Vec<RowDesc> {
     let a = (0..11).map(|r| RowDesc{x_min: max(-r + 5, 0), x_max: min(15-r, 10)});
-    return a.collect();
+    a.collect()
 }
 
 #[cfg(test)]

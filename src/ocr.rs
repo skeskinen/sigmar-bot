@@ -23,7 +23,7 @@ impl SRGB {
     fn eucl_dist(&self, other: &SRGB)-> f32 {
         let SRGB{r: r_s, g: g_s, b: b_s} = *self;
         let SRGB{r: r_o, g: g_o, b: b_o} = *other;
-        let f = |a: u8, b: u8| -> f32 {let diff = a as f32 - b as f32; diff * diff};
+        let f = |a: u8, b: u8| -> f32 {let diff = f32::from(a) - f32::from(b); diff * diff};
         (f(r_s, r_o) + f(g_s, g_o) + f(b_s, b_o)).sqrt()
     }
 }
@@ -433,17 +433,17 @@ fn capture(mut capturer: Capturer) -> Vec<u8> {
 pub fn ocr_game_board() -> Option<Board>{
     let display = Display::primary().expect("Couldn't find primary display.");
     let capturer = Capturer::new(display).expect("Couldn't begin capture.");
-    let (w, h) = (capturer.width(), capturer.height());
+    let (screen_w, screen_h) = (capturer.width(), capturer.height());
 
     let buffer = capture(capturer);
 
-    // _save_screenshot(&buffer, w, h);
+    // _save_screenshot(&buffer, screen_w, screen_h);
 
     let desktop_image: Image<SRGB> = Image{
-        w: w, h: h,
+        w: screen_w, h: screen_h,
         data: (&buffer[..]).chunks(4).map(|chunk: &[u8]| {
                 match chunk {
-                    &[b, g, r, _a] => SRGB{r: r, g: g, b: b},
+                    &[b, g, r, _a] => SRGB{r, g, b},
                     _ => unreachable!()
                 }
             }).collect()
@@ -452,12 +452,12 @@ pub fn ocr_game_board() -> Option<Board>{
     let mut best_dist = ::std::f32::MAX;
     let mut best_coord = (0,0);
 
-    for y in 10..(h-10) {
-        for x in 10..(w-10) {
+    for y in 10..(screen_h - 10) {
+        for x in 10..(screen_w - 10) {
             let mut d: f32 = 0.0;
             for my in 0..3 {
                 for mx in 0..5 {
-                    let index = (y + my - 1) * w + (x + mx - 2);
+                    let index = (y + my - 1) * screen_w + (x + mx - 2);
                     d += desktop_image[index].eucl_dist(&GOLD_PIXEL_VALUES[my][mx]);
                 }
             }
@@ -479,10 +479,10 @@ pub fn ocr_game_board() -> Option<Board>{
 
     let mut board: Board = Board::new(
         [[Marble::Empty;13];13],
-        gold_x as f32 / w as f32,
-        gold_y as f32 / h as f32,
-        TILE_WIDTH as f32 / w as f32,
-        TILE_HEIGHT as f32 / h as f32,
+        gold_x as f32 / screen_w as f32,
+        gold_y as f32 / screen_h as f32,
+        TILE_WIDTH as f32 / screen_w as f32,
+        TILE_HEIGHT as f32 / screen_h as f32,
     );
 
     for (i, r) in rows.iter().enumerate() {
@@ -498,8 +498,8 @@ pub fn ocr_game_board() -> Option<Board>{
     Some(board)
 }
 
-fn _save_screenshot(buffer: &Vec<u8>, w: usize, h: usize) {
-    let mut bitflipped = Vec::with_capacity(w * h * 4);
+fn _save_screenshot(buffer: &Vec<u8>, buffer_w: usize, buffer_h: usize) {
+    let mut bitflipped = Vec::with_capacity(buffer_w * buffer_h * 4);
     for pixel in buffer.chunks(4) {
         let (b, g, r, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
         bitflipped.extend_from_slice(&[r, g, b, a]);
@@ -508,8 +508,8 @@ fn _save_screenshot(buffer: &Vec<u8>, w: usize, h: usize) {
     let path = Path::new("screenshot.png");
     let image: ImageBuffer<Rgba<u8>, _> =
         ImageBuffer::from_raw(
-            w as u32,
-            h as u32,
+            buffer_w as u32,
+            buffer_h as u32,
             bitflipped
         ).expect("Couldn't convert frame into image buffer.");
 
